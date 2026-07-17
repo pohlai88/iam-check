@@ -48,13 +48,35 @@ export async function runNeonHttpTransaction<T extends unknown[]>(
 	queriesOrFn: NeonHttpTxQuery[] | ((sql: NeonHttpSql) => NeonHttpTxQuery[]),
 	options?: NeonHttpTransactionOptions,
 ): Promise<T> {
-	const sql = getNeonSql();
-	const queries =
-		typeof queriesOrFn === "function" ? queriesOrFn(sql) : queriesOrFn;
+	// Resolve the query list without eagerly connecting to Neon.
+	// A lazy Proxy is used so that when the builder function never accesses
+	// `sql` (e.g. it returns []), the empty-list guard fires before
+	// requireProductDatabaseUrl() is ever called — matching the contract test.
+	const queries: NeonHttpTxQuery[] =
+		typeof queriesOrFn === "function"
+			? queriesOrFn(
+					new Proxy((() => {}) as unknown as NeonHttpSql, {
+						get(_, prop) {
+							return (
+								getNeonSql() as unknown as Record<string | symbol, unknown>
+							)[prop];
+						},
+						apply(_, thisArg, argList) {
+							return (
+								getNeonSql() as unknown as (
+									...args: unknown[]
+								) => unknown
+							)(...argList);
+						},
+					}),
+				)
+			: queriesOrFn;
+
 	if (queries.length === 0) {
 		throw new Error("runNeonHttpTransaction requires at least one query");
 	}
 
+	const sql = getNeonSql();
 	const result = await sql.transaction(queries, {
 		isolationLevel: options?.isolationLevel ?? "ReadCommitted",
 		readOnly: options?.readOnly,
