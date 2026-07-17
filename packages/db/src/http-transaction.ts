@@ -52,21 +52,23 @@ export async function runNeonHttpTransaction<T extends unknown[]>(
 	// A lazy Proxy is used so that when the builder function never accesses
 	// `sql` (e.g. it returns []), the empty-list guard fires before
 	// requireProductDatabaseUrl() is ever called — matching the contract test.
+	//
+	// The Proxy target must be a no-op function because NeonQueryFunction is
+	// itself callable (tagged-template); a plain {} target would cause a
+	// "target is not a function" TypeError on the apply trap.
 	const queries: NeonHttpTxQuery[] =
 		typeof queriesOrFn === "function"
 			? queriesOrFn(
 					new Proxy((() => {}) as unknown as NeonHttpSql, {
 						get(_, prop) {
-							return (
-								getNeonSql() as unknown as Record<string | symbol, unknown>
-							)[prop];
+							return Reflect.get(getNeonSql() as object, prop);
 						},
 						apply(_, thisArg, argList) {
-							return (
-								getNeonSql() as unknown as (
-									...args: unknown[]
-								) => unknown
-							)(...argList);
+							return Reflect.apply(
+								getNeonSql() as unknown as (...args: unknown[]) => unknown,
+								thisArg as NeonHttpSql,
+								argList,
+							);
 						},
 					}),
 				)
